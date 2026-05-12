@@ -1,0 +1,11 @@
+anthropic
+fastapi
+httpx
+mss
+pillow
+pydantic
+pyautogui
+python-dotenv
+python-telegram-bot
+pytest
+uvicorn
