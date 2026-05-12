@@ -169,6 +169,7 @@ class SQLiteStorage:
                 connection.execute(
                     "ALTER TABLE tasks ADD COLUMN assigned_client_id TEXT"
                 )
+            self._migrate_legacy_task_linked_tables(connection)
 
     def _task_exists(self, task_id: str) -> bool:
         with self._connect() as connection:
@@ -177,3 +178,108 @@ class SQLiteStorage:
                 (task_id,),
             ).fetchone()
         return row is not None
+
+    def _migrate_legacy_task_linked_tables(self, connection: sqlite3.Connection) -> None:
+        if self._table_has_foreign_keys(connection, "task_events"):
+            task_events_ready = True
+        else:
+            self._rebuild_table(
+                connection=connection,
+                table_name="task_events",
+                create_sql="""
+                CREATE TABLE task_events (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    task_id TEXT NOT NULL,
+                    event_type TEXT NOT NULL,
+                    message TEXT NOT NULL DEFAULT '',
+                    image_base64 TEXT,
+                    FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE CASCADE
+                )
+                """,
+                copy_sql="""
+                INSERT INTO task_events (id, task_id, event_type, message, image_base64)
+                SELECT legacy.id, legacy.task_id, legacy.event_type, legacy.message, legacy.image_base64
+                FROM task_events_legacy AS legacy
+                INNER JOIN tasks ON tasks.id = legacy.task_id
+                """,
+            )
+            task_events_ready = True
+
+        if self._table_has_foreign_keys(connection, "interrupts"):
+            interrupts_ready = True
+        else:
+            self._rebuild_table(
+                connection=connection,
+                table_name="interrupts",
+                create_sql="""
+                CREATE TABLE interrupts (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    task_id TEXT NOT NULL,
+                    text TEXT NOT NULL,
+                    consumed INTEGER NOT NULL DEFAULT 0,
+                    FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE CASCADE
+                )
+                """,
+                copy_sql="""
+                INSERT INTO interrupts (id, task_id, text, consumed)
+                SELECT legacy.id, legacy.task_id, legacy.text, legacy.consumed
+                FROM interrupts_legacy AS legacy
+                INNER JOIN tasks ON tasks.id = legacy.task_id
+                """,
+            )
+            interrupts_ready = True
+
+        if self._table_has_foreign_keys(connection, "client_status"):
+            client_status_ready = True
+        else:
+            self._rebuild_table(
+                connection=connection,
+                table_name="client_status",
+                create_sql="""
+                CREATE TABLE client_status (
+                    client_id TEXT PRIMARY KEY,
+                    is_busy INTEGER NOT NULL,
+                    current_task_id TEXT,
+                    FOREIGN KEY (current_task_id) REFERENCES tasks(id) ON DELETE SET NULL
+                )
+                """,
+                copy_sql="""
+                INSERT INTO client_status (client_id, is_busy, current_task_id)
+                SELECT
+                    legacy.client_id,
+                    legacy.is_busy,
+                    CASE
+                        WHEN legacy.current_task_id IS NULL THEN NULL
+                        WHEN EXISTS (SELECT 1 FROM tasks WHERE id = legacy.current_task_id)
+                            THEN legacy.current_task_id
+                        ELSE NULL
+                    END
+                FROM client_status_legacy AS legacy
+                """,
+            )
+            client_status_ready = True
+
+        if task_events_ready or interrupts_ready or client_status_ready:
+            connection.execute("PRAGMA foreign_keys = ON")
+
+    def _table_has_foreign_keys(
+        self, connection: sqlite3.Connection, table_name: str
+    ) -> bool:
+        rows = connection.execute(
+            f"PRAGMA foreign_key_list({table_name})"
+        ).fetchall()
+        return bool(rows)
+
+    def _rebuild_table(
+        self,
+        connection: sqlite3.Connection,
+        table_name: str,
+        create_sql: str,
+        copy_sql: str,
+    ) -> None:
+        legacy_table_name = f"{table_name}_legacy"
+        connection.execute("PRAGMA foreign_keys = OFF")
+        connection.execute(f"ALTER TABLE {table_name} RENAME TO {legacy_table_name}")
+        connection.execute(create_sql)
+        connection.execute(copy_sql)
+        connection.execute(f"DROP TABLE {legacy_table_name}")

@@ -5,6 +5,7 @@ import pytest
 from shared.schemas import ClientHeartbeat, TaskCreateRequest, TaskStatus
 
 from backend.service import BackendService
+from backend.storage import SQLiteStorage
 
 
 def test_create_task_persists_a_pending_task(tmp_path):
@@ -110,3 +111,64 @@ def test_record_heartbeat_updates_client_presence(tmp_path):
         connection.close()
 
     assert row == ("worker-1", 1, task.id)
+
+
+def test_storage_migrates_legacy_task_linked_tables_to_enforce_foreign_keys(tmp_path):
+    db_path = tmp_path / "legacy.db"
+    connection = sqlite3.connect(db_path)
+    try:
+        connection.executescript(
+            """
+            CREATE TABLE tasks (
+                id TEXT PRIMARY KEY,
+                chat_id INTEGER NOT NULL,
+                text TEXT NOT NULL,
+                status TEXT NOT NULL,
+                result_text TEXT NOT NULL DEFAULT ''
+            );
+
+            CREATE TABLE task_events (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                task_id TEXT NOT NULL,
+                event_type TEXT NOT NULL,
+                message TEXT NOT NULL DEFAULT '',
+                image_base64 TEXT
+            );
+
+            CREATE TABLE interrupts (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                task_id TEXT NOT NULL,
+                text TEXT NOT NULL,
+                consumed INTEGER NOT NULL DEFAULT 0
+            );
+
+            CREATE TABLE client_status (
+                client_id TEXT PRIMARY KEY,
+                is_busy INTEGER NOT NULL,
+                current_task_id TEXT
+            );
+            """
+        )
+    finally:
+        connection.close()
+
+    SQLiteStorage(db_path)
+
+    connection = sqlite3.connect(db_path)
+    try:
+        connection.execute("PRAGMA foreign_keys = ON")
+        interrupt_fks = connection.execute("PRAGMA foreign_key_list(interrupts)").fetchall()
+        event_fks = connection.execute("PRAGMA foreign_key_list(task_events)").fetchall()
+        client_fks = connection.execute("PRAGMA foreign_key_list(client_status)").fetchall()
+
+        with pytest.raises(sqlite3.IntegrityError):
+            connection.execute(
+                "INSERT INTO interrupts (task_id, text, consumed) VALUES (?, ?, 0)",
+                ("missing-task", "orphan interrupt"),
+            )
+    finally:
+        connection.close()
+
+    assert interrupt_fks
+    assert event_fks
+    assert client_fks
