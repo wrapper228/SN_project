@@ -4,6 +4,8 @@ import asyncio
 import os
 import time
 
+from dotenv import load_dotenv
+
 from client.agent import (
     add_task_result,
     build_context,
@@ -18,6 +20,8 @@ from client.agent import (
 from client.agent.tools import ToolResult
 from client.backend_api import ClientBackendApi
 from client.polling import run_once
+
+load_dotenv()
 
 
 def execute_task(task, interrupt_fetcher, event_sender):
