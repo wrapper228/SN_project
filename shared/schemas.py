@@ -16,7 +16,7 @@ class TaskCreateRequest(BaseModel):
 
 
 class TaskRecord(BaseModel):
-    id: str
+    id: str = Field(min_length=1)
     chat_id: int
     text: str
     status: TaskStatus = TaskStatus.PENDING
@@ -24,19 +24,19 @@ class TaskRecord(BaseModel):
 
 
 class TaskEventCreate(BaseModel):
-    task_id: str
-    event_type: str
+    task_id: str = Field(min_length=1)
+    event_type: str = Field(min_length=1)
     message: str = ""
     image_base64: str | None = None
 
 
 class InterruptRecord(BaseModel):
-    task_id: str
+    task_id: str = Field(min_length=1)
     text: str
     consumed: bool = False
 
 
 class ClientHeartbeat(BaseModel):
-    client_id: str
+    client_id: str = Field(min_length=1)
     is_busy: bool
     current_task_id: str | None = None

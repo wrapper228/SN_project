@@ -1,10 +1,5 @@
-from pathlib import Path
-import sys
-
 import pytest
 from pydantic import ValidationError
-
-sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from shared.schemas import (
     ClientHeartbeat,
@@ -53,3 +48,20 @@ def test_interrupt_record_defaults_to_unconsumed():
 def test_client_heartbeat_requires_client_id():
     with pytest.raises(ValidationError):
         ClientHeartbeat(is_busy=False)
+
+
+def test_transport_identifiers_and_event_type_cannot_be_empty():
+    with pytest.raises(ValidationError):
+        TaskRecord(id="", chat_id=123, text="do something")
+
+    with pytest.raises(ValidationError):
+        TaskEventCreate(task_id="", event_type="text")
+
+    with pytest.raises(ValidationError):
+        TaskEventCreate(task_id="task-1", event_type="")
+
+    with pytest.raises(ValidationError):
+        InterruptRecord(task_id="", text="stop now")
+
+    with pytest.raises(ValidationError):
+        ClientHeartbeat(client_id="", is_busy=False)
