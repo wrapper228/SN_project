@@ -1,5 +1,7 @@
 import sqlite3
 
+import pytest
+
 from shared.schemas import ClientHeartbeat, TaskCreateRequest, TaskStatus
 
 from backend.service import BackendService
@@ -47,16 +49,21 @@ def test_assign_next_task_marks_next_task_as_running(tmp_path):
 
     connection = sqlite3.connect(db_path)
     try:
-        statuses = connection.execute(
-            "SELECT id, status FROM tasks ORDER BY rowid"
+        task_rows = connection.execute(
+            "SELECT id, status, assigned_client_id FROM tasks ORDER BY rowid"
         ).fetchall()
+        client_row = connection.execute(
+            "SELECT client_id, is_busy, current_task_id FROM client_status WHERE client_id = ?",
+            ("worker-1",),
+        ).fetchone()
     finally:
         connection.close()
 
-    assert statuses == [
-        (first.id, TaskStatus.RUNNING.value),
-        (statuses[1][0], TaskStatus.PENDING.value),
+    assert task_rows == [
+        (first.id, TaskStatus.RUNNING.value, "worker-1"),
+        (task_rows[1][0], TaskStatus.PENDING.value, None),
     ]
+    assert client_row == ("worker-1", 1, first.id)
 
 
 def test_add_interrupt_and_consume_interrupts_returns_pending_interrupts_once(tmp_path):
@@ -73,11 +80,19 @@ def test_add_interrupt_and_consume_interrupts_returns_pending_interrupts_once(tm
     assert second_batch == []
 
 
+def test_add_interrupt_rejects_unknown_task_ids(tmp_path):
+    service = BackendService(db_path=tmp_path / "backend.db")
+
+    with pytest.raises(ValueError, match="Unknown task_id"):
+        service.add_interrupt("missing-task", "Pause now")
+
+
 def test_record_heartbeat_updates_client_presence(tmp_path):
     db_path = tmp_path / "backend.db"
     service = BackendService(db_path=db_path)
+    task = service.create_task(TaskCreateRequest(chat_id=9, text="Heartbeat target"))
     first = ClientHeartbeat(client_id="worker-1", is_busy=False, current_task_id=None)
-    second = ClientHeartbeat(client_id="worker-1", is_busy=True, current_task_id="task-123")
+    second = ClientHeartbeat(client_id="worker-1", is_busy=True, current_task_id=task.id)
 
     recorded_first = service.record_heartbeat(first)
     recorded_second = service.record_heartbeat(second)
@@ -94,4 +109,4 @@ def test_record_heartbeat_updates_client_presence(tmp_path):
     finally:
         connection.close()
 
-    assert row == ("worker-1", 1, "task-123")
+    assert row == ("worker-1", 1, task.id)

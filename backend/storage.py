@@ -32,7 +32,6 @@ class SQLiteStorage:
         return task
 
     def assign_next_task(self, client_id: str) -> TaskRecord | None:
-        del client_id
         with self._connect() as connection:
             connection.execute("BEGIN IMMEDIATE")
             row = connection.execute(
@@ -49,8 +48,18 @@ class SQLiteStorage:
                 return None
 
             connection.execute(
-                "UPDATE tasks SET status = ? WHERE id = ?",
-                (TaskStatus.RUNNING.value, row["id"]),
+                "UPDATE tasks SET status = ?, assigned_client_id = ? WHERE id = ?",
+                (TaskStatus.RUNNING.value, client_id, row["id"]),
+            )
+            connection.execute(
+                """
+                INSERT INTO client_status (client_id, is_busy, current_task_id)
+                VALUES (?, 1, ?)
+                ON CONFLICT(client_id) DO UPDATE SET
+                    is_busy = excluded.is_busy,
+                    current_task_id = excluded.current_task_id
+                """,
+                (client_id, row["id"]),
             )
             return TaskRecord(
                 id=row["id"],
@@ -61,6 +70,9 @@ class SQLiteStorage:
             )
 
     def add_interrupt(self, task_id: str, text: str) -> None:
+        if not self._task_exists(task_id):
+            raise ValueError(f"Unknown task_id: {task_id}")
+
         with self._connect() as connection:
             connection.execute(
                 "INSERT INTO interrupts (task_id, text, consumed) VALUES (?, ?, 0)",
@@ -109,6 +121,7 @@ class SQLiteStorage:
     def _connect(self) -> sqlite3.Connection:
         connection = sqlite3.connect(self._db_path)
         connection.row_factory = sqlite3.Row
+        connection.execute("PRAGMA foreign_keys = ON")
         return connection
 
     def _initialize(self) -> None:
@@ -120,6 +133,7 @@ class SQLiteStorage:
                     chat_id INTEGER NOT NULL,
                     text TEXT NOT NULL,
                     status TEXT NOT NULL,
+                    assigned_client_id TEXT,
                     result_text TEXT NOT NULL DEFAULT ''
                 );
 
@@ -128,20 +142,38 @@ class SQLiteStorage:
                     task_id TEXT NOT NULL,
                     event_type TEXT NOT NULL,
                     message TEXT NOT NULL DEFAULT '',
-                    image_base64 TEXT
+                    image_base64 TEXT,
+                    FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE CASCADE
                 );
 
                 CREATE TABLE IF NOT EXISTS interrupts (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     task_id TEXT NOT NULL,
                     text TEXT NOT NULL,
-                    consumed INTEGER NOT NULL DEFAULT 0
+                    consumed INTEGER NOT NULL DEFAULT 0,
+                    FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE CASCADE
                 );
 
                 CREATE TABLE IF NOT EXISTS client_status (
                     client_id TEXT PRIMARY KEY,
                     is_busy INTEGER NOT NULL,
-                    current_task_id TEXT
+                    current_task_id TEXT,
+                    FOREIGN KEY (current_task_id) REFERENCES tasks(id) ON DELETE SET NULL
                 );
                 """
             )
+            task_columns = {
+                row["name"] for row in connection.execute("PRAGMA table_info(tasks)").fetchall()
+            }
+            if "assigned_client_id" not in task_columns:
+                connection.execute(
+                    "ALTER TABLE tasks ADD COLUMN assigned_client_id TEXT"
+                )
+
+    def _task_exists(self, task_id: str) -> bool:
+        with self._connect() as connection:
+            row = connection.execute(
+                "SELECT 1 FROM tasks WHERE id = ?",
+                (task_id,),
+            ).fetchone()
+        return row is not None
