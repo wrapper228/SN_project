@@ -59,12 +59,19 @@ def create_app(db_path: Path = DEFAULT_DB_PATH) -> FastAPI:
 
     @app.post("/api/v1/frontend/tasks/{task_id}/interrupt")
     def interrupt_task(task_id: str, payload: InterruptRequest):
-        service.add_interrupt(task_id, payload.text)
-        return {"ok": True}
+        return {"ok": service.safe_add_interrupt(task_id, payload.text)}
 
     @app.get("/api/v1/client/tasks/{task_id}/interrupts")
     def consume_interrupts(task_id: str):
         return {"interrupts": service.consume_interrupts(task_id)}
+
+    @app.get("/api/v1/frontend/tasks/{task_id}")
+    def get_task(task_id: str):
+        return service.get_task(task_id)
+
+    @app.get("/api/v1/frontend/tasks/{task_id}/events")
+    def list_task_events(task_id: str):
+        return {"events": service.list_task_events(task_id)}
 
     return app
 

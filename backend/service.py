@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import sqlite3
 from pathlib import Path
 
 from shared.schemas import (
@@ -48,6 +49,42 @@ class BackendService:
                 ),
             )
 
+    def get_task(self, task_id: str) -> TaskRecord:
+        with self._storage._connect() as connection:
+            row = connection.execute(
+                """
+                SELECT id, chat_id, text, status, result_text
+                FROM tasks
+                WHERE id = ?
+                """,
+                (task_id,),
+            ).fetchone()
+
+        if row is None:
+            raise ValueError(f"Unknown task_id: {task_id}")
+
+        return TaskRecord(
+            id=row["id"],
+            chat_id=row["chat_id"],
+            text=row["text"],
+            status=TaskStatus(row["status"]),
+            result_text=row["result_text"],
+        )
+
+    def list_task_events(self, task_id: str) -> list[dict[str, str | None]]:
+        with self._storage._connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT event_type, message, image_base64
+                FROM task_events
+                WHERE task_id = ?
+                ORDER BY id
+                """,
+                (task_id,),
+            ).fetchall()
+
+        return [dict(row) for row in rows]
+
     def complete_task(
         self, task_id: str, status: TaskStatus, result_text: str
     ) -> TaskRecord:
@@ -75,3 +112,10 @@ class BackendService:
             status=TaskStatus(row["status"]),
             result_text=row["result_text"],
         )
+
+    def safe_add_interrupt(self, task_id: str, text: str) -> bool:
+        try:
+            self.add_interrupt(task_id, text)
+        except ValueError:
+            return False
+        return True
