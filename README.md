@@ -1,29 +1,77 @@
 # SN Project
 
-Study project with explicit separation between:
+Учебный проект, демонстрирующий явное разделение на:
 
-- Telegram frontend
-- FastAPI cloud backend
-- local Windows execution client
+- `frontend` — Telegram-бот
+- `backend` — FastAPI API в облаке
+- `client` — локальный Windows-агент, который реально управляет ПК
 
-## Repository Layout
+Проект построен так, чтобы преподаватель мог быстро увидеть:
 
-- `bot/` - Telegram interface for the user
-- `backend/` - task API, queue/state, interrupts, task events
-- `client/` - local Windows agent client and watchdog
-- `client/agent/` - migrated computer-use runtime
-- `shared/` - shared Pydantic schemas between components
+1. архитектурное разделение частей системы;
+2. работу через удалённый backend;
+3. локальное исполнение действий на компьютере;
+4. подтверждение работы в виде истории Telegram-диалога.
 
-## Demo Flow
+## Что делает проект
 
-1. User sends a task to the Telegram bot.
-2. Bot posts the task to the FastAPI backend.
-3. Local Windows client polls the backend and claims the task.
-4. The client runs the existing computer-control agent locally.
-5. Task events, screenshots, and final result return to the backend.
-6. Telegram frontend shows progress and final status to the user.
+Пользователь пишет задачу в Telegram.  
+Telegram-бот отправляет её в FastAPI backend.  
+Локальный Windows-клиент опрашивает backend, забирает задачу и выполняет её на компьютере пользователя через agent loop.  
+Промежуточные события, скриншоты и итоговый результат возвращаются в backend, а затем отображаются в Telegram.
 
-## Run
+Такое разделение выбрано специально.
+
+- `frontend` вынесен в Telegram, чтобы пользователь мог ставить задачи удалённо из привычного интерфейса;
+- `backend` вынесен в облако, чтобы именно он был общей точкой координации, хранения задач, interrupt-сообщений и статусов;
+- `client` оставлен локально, потому что только локальный процесс может реально управлять Windows-компьютером пользователя.
+
+Иначе говоря, backend здесь нужен не формально, а как центральный узел между удалённым интерфейсом и локальным исполнителем. Именно это и демонстрирует учебное разделение на frontend и backend в практическом сценарии.
+
+## Архитектура
+
+### Компоненты
+
+- `bot/` — Telegram frontend
+- `backend/` — FastAPI backend, хранение задач, событий, interrupt-сообщений и статуса клиента
+- `client/` — локальный Windows-клиент
+- `client/agent/` — перенесённый runtime computer-use агента
+- `shared/` — общие Pydantic-схемы между frontend, backend и client
+
+### Поток данных
+
+1. Пользователь отправляет сообщение боту.
+2. Бот создаёт задачу через backend API.
+3. Локальный client получает задачу через polling.
+4. Client исполняет её на локальном ПК.
+5. Backend получает события, скриншоты и финальный результат.
+6. Бот отправляет пользователю прогресс и итог.
+
+## Что реализовано
+
+- создание задач через Telegram;
+- отдельный FastAPI backend;
+- локальный polling-client;
+- передача interrupt-сообщений во время выполнения;
+- передача task events и финального результата;
+- интеграция с локальным computer-use runtime;
+- watchdog для локального клиента;
+- хранение backend state в SQLite.
+
+## Развёртывание
+
+### Railway
+
+В Railway развёрнуты **2 отдельных сервиса**:
+
+- `sn-backend` — FastAPI backend
+- `sn-bot` — Telegram frontend
+
+Локальный Windows-client **не деплоится в Railway**, а запускается на компьютере пользователя отдельно.
+
+Подробности по развёртыванию: [docs/deployment.md](docs/deployment.md)
+
+### Команды запуска
 
 Backend:
 
@@ -42,4 +90,131 @@ Local Windows client:
 ```bash
 python -m client.watchdog
 ```
-# SN_project
+
+## Как проверить проект
+
+Есть 2 режима проверки.
+
+### 1. Посмотреть уже развёрнутую версию
+
+Если сервисы Railway уже активны, преподаватель может проверить frontend сразу через Telegram:
+
+- бот: `@sn_atamanyuk_bot`
+
+Что сделать:
+
+1. открыть бота в Telegram;
+2. отправить `/start`;
+3. отправить обычное сообщение-задачу, например:
+   - `привет`
+   - `сделай скриншот`
+   - `открой блокнот`
+
+Что должно происходить:
+
+- бот отвечает подтверждением запуска;
+- создаётся задача;
+- локальный Windows-client пользователя забирает задачу через backend;
+- в Telegram приходят промежуточные сообщения, скриншоты и финальный результат.
+
+Важно:
+
+- сам по себе Telegram-бот не управляет компьютером;
+- реальные действия на ПК выполняются только если локальный `client` в этот момент запущен на Windows-машине.
+
+### 2. Воспроизвести локально с уже работающим Railway backend
+
+Нужен Python 3.10+ и Anthropic API key.
+
+Шаги:
+
+1. склонировать репозиторий;
+2. создать виртуальное окружение;
+3. установить зависимости;
+4. создать `.env` по примеру из `.env.example`;
+5. запустить локальный client.
+
+Команды:
+
+```bash
+python -m venv .venv
+.venv\Scripts\activate
+pip install -r requirements.txt
+```
+
+Создать `.env` на основе `.env.example`:
+
+```env
+BACKEND_URL=https://snproject-production.up.railway.app
+CLIENT_ID=desktop-main
+ANTHROPIC_API_KEY=your_anthropic_api_key
+ANTHROPIC_MODEL=claude-sonnet-4-6
+```
+
+Запуск:
+
+```bash
+python -m client.watchdog
+```
+
+После этого можно отправлять задачи боту `@sn_atamanyuk_bot`.
+
+## Что нужно для воспроизводимости
+
+Файл примера окружения:
+
+- [.env.example](.env.example)
+
+Минимально нужны:
+
+- `BACKEND_URL` — адрес Railway backend;
+- `CLIENT_ID` — идентификатор локального клиента;
+- `ANTHROPIC_API_KEY` — ключ для локального выполнения agent runtime.
+
+## Быстрая проверка
+
+Проверенные тесты:
+
+```bash
+pytest tests/shared/test_schemas.py tests/backend/test_service.py tests/backend/test_app.py -q
+```
+
+Также проверялась компиляция новых модулей Python без синтаксических ошибок.
+
+## История демонстрации
+
+Для преподавателя в репозитории приложен экспорт реального Telegram-диалога с ботом:
+
+- папка: [ChatExport_2026-05-13](ChatExport_2026-05-13)
+- основной файл: `ChatExport_2026-05-13/messages.html`
+- краткое описание: [docs/chat-history.md](docs/chat-history.md)
+
+Важно:
+
+- GitHub может показывать `messages.html` как обычный файл, а не как готовую веб-страницу.
+- Чтобы посмотреть экспорт **в нормальном виде**, лучше скачать репозиторий и открыть файл `ChatExport_2026-05-13/messages.html` в браузере локально.
+
+Что видно в истории чата:
+
+- успешный `/start`;
+- создание задач через Telegram;
+- получение ботом и backend-ом реальных task id;
+- отправка скриншотов и промежуточных шагов;
+- interrupt текущей задачи новым сообщением;
+- итоговый ответ по обработанной задаче.
+
+## Полезные файлы
+
+- Архитектура: [docs/architecture.md](docs/architecture.md)
+- Развёртывание: [docs/deployment.md](docs/deployment.md)
+- Краткое описание истории чата: [docs/chat-history.md](docs/chat-history.md)
+
+## Итог
+
+Проект показывает не просто Telegram-бота или локальный скрипт, а распределённую систему из трёх частей:
+
+- облачный backend;
+- отдельный frontend;
+- локальный исполнитель действий на ПК.
+
+Именно это и является основным учебным результатом работы.

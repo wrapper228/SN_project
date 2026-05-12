@@ -24,6 +24,7 @@ MANIFEST
 
 # Virtual Env
 venv/
+.venv/
 env/
 ENV/
 
@@ -47,3 +48,6 @@ data/
 outputs/
 *.log
 activity.log
+
+# Local exports
+ChatExport_*.rar
